@@ -184,6 +184,7 @@ const Icon = ({ name, size = 20, ...props }) => {
     save: <><path d="M5 4h11l3 3v13a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z"/><rect x="7" y="13" width="10" height="7"/><path d="M7 4v5h7V4"/></>,
     cloudUp: <><path d="M7 18a5 5 0 01-1-9.9 7 7 0 0113.5 2A4.5 4.5 0 0118 18"/><path d="M12 12v8m0-8l-3 3m3-3l3 3"/></>,
     cloudDown: <><path d="M7 18a5 5 0 01-1-9.9 7 7 0 0113.5 2A4.5 4.5 0 0118 18"/><path d="M12 20v-8m0 8l-3-3m3 3l3-3"/></>,
+    upload: <><path d="M12 20V8m0 0l-4 4m4-4l4 4"/><path d="M4 4h16"/></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -194,6 +195,14 @@ const Icon = ({ name, size = 20, ...props }) => {
 };
 
 window.Icon = Icon;
+
+// Helper: ชื่อเต็ม รวมคำนำหน้า (ถ้ามี)
+function fullName(s) {
+  if (!s) return "";
+  const parts = [s.prefix, s.firstName, s.lastName].filter(x => x && String(x).trim());
+  return parts.join(" ");
+}
+window.fullName = fullName;
 
 
 // Shared components
@@ -293,7 +302,7 @@ const DailyView = ({ students, date, setDate, dayRecord, setStatus, setNote, mar
 
   const filtered = students.filter(s =>
     !search ||
-    (s.firstName + " " + s.lastName).includes(search) ||
+    (fullName(s)).includes(search) ||
     s.studentId.includes(search) ||
     String(s.number).includes(search)
   );
@@ -355,7 +364,7 @@ const DailyView = ({ students, date, setDate, dayRecord, setStatus, setNote, mar
             <div className="student-row" key={s.id}>
               <div className="num">{String(s.number).padStart(2, '0')}</div>
               <div className="name">
-                <div className="full">{s.firstName} {s.lastName}</div>
+                <div className="full">{fullName(s)}</div>
                 <div className="meta">รหัส {s.studentId} · {s.gender}</div>
               </div>
               <StatusButtonGroup
@@ -377,7 +386,7 @@ const DailyView = ({ students, date, setDate, dayRecord, setStatus, setNote, mar
 
       {noteEditing && (
         <Modal
-          title={`หมายเหตุ — ${noteEditing.firstName} ${noteEditing.lastName}`}
+          title={`หมายเหตุ — ${fullName(noteEditing)}`}
           onClose={() => setNoteEditing(null)}
           footer={
             <>
@@ -492,7 +501,7 @@ const HistoryView = ({ students, attendance }) => {
               return (
                 <tr key={s.id}>
                   <td className="num">{s.number}</td>
-                  <td className="name">{s.firstName} {s.lastName}</td>
+                  <td className="name">{fullName(s)}</td>
                   <td><span className="status-pill present">{t.present}</span></td>
                   <td><span className="status-pill absent">{t.absent}</span></td>
                   <td><span className="status-pill leave">{t.leave}</span></td>
@@ -527,27 +536,271 @@ window.computeTermInfo = (offset) => {
 
 
 // =========================================================
+// Import Students Modal — รองรับ Excel + Copy-paste
+// =========================================================
+const ImportStudentsModal = ({ onClose, onImport }) => {
+  const [mode, setMode] = React.useState('file'); // 'file' | 'paste'
+  const [pasteText, setPasteText] = React.useState('');
+  const [parsed, setParsed] = React.useState(null); // { rows, headers, error }
+  const [loading, setLoading] = React.useState(false);
+
+  // แปลง array of cells (row) → student object
+  // รองรับคอลัมน์: เลขที่ | เลขประจำตัว | คำนำหน้า | ชื่อ | นามสกุล
+  // ถ้ามีน้อยกว่า ก็ map ตามที่มี
+  function parseRows(rows) {
+    if (!rows || rows.length === 0) return [];
+
+    // ตรวจหา header row โดยมองหาคำสำคัญ
+    let dataStart = 0;
+    let columnMap = { number: 0, studentId: 1, prefix: 2, firstName: 3, lastName: 4 };
+
+    const headerRow = rows[0].map(c => String(c || '').trim());
+    const hasHeader = headerRow.some(c =>
+      /เลขที่|ลำดับ|number|no\.?$/i.test(c) ||
+      /ชื่อ|name/i.test(c) ||
+      /รหัส|เลขประจำตัว|id$/i.test(c)
+    );
+
+    if (hasHeader) {
+      dataStart = 1;
+      columnMap = {};
+      headerRow.forEach((h, i) => {
+        if (/เลขที่|ลำดับ|^no\.?$|^#$/i.test(h)) columnMap.number = i;
+        else if (/รหัส|เลขประจำตัว|^id$|student.*id/i.test(h)) columnMap.studentId = i;
+        else if (/คำนำ|prefix|title/i.test(h)) columnMap.prefix = i;
+        else if (/ชื่อจริง|^ชื่อ$|first.*name|fname/i.test(h)) columnMap.firstName = i;
+        else if (/นามสกุล|last.*name|lname|surname/i.test(h)) columnMap.lastName = i;
+        else if (/ชื่อ.*สกุล|name$/i.test(h) && columnMap.firstName === undefined) columnMap.firstName = i;
+      });
+    }
+
+    const students = [];
+    for (let i = dataStart; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row || row.every(c => !c || String(c).trim() === '')) continue;
+
+      const get = (key) => {
+        const idx = columnMap[key];
+        if (idx === undefined) return '';
+        const v = row[idx];
+        return v === null || v === undefined ? '' : String(v).trim();
+      };
+
+      // คอลัมน์ "ชื่อ" ใน sheet เดิมอาจมีคำนำหน้า+ชื่อปนกัน (เช่น "นาย กิตติชัย")
+      // ถ้าไม่มีคอลัมน์ prefix แยก ลองแยกจากชื่อ
+      let prefix = get('prefix');
+      let firstName = get('firstName');
+      let lastName = get('lastName');
+
+      if (!prefix && firstName) {
+        const m = firstName.match(/^(นาย|นาง|น\.ส\.|นางสาว|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.)\s*(.+)$/);
+        if (m) {
+          prefix = m[1];
+          firstName = m[2];
+        }
+      }
+
+      const numberRaw = get('number');
+      const number = parseInt(numberRaw, 10);
+
+      const student = {
+        number: isNaN(number) ? (students.length + 1) : number,
+        studentId: get('studentId'),
+        prefix: prefix,
+        firstName: firstName,
+        lastName: lastName,
+        gender: /หญิง|น\.ส\.|นางสาว|เด็กหญิง|ด\.ญ\./.test(prefix) ? 'ญ' : 'ช',
+      };
+
+      // ต้องมีอย่างน้อย firstName หรือ studentId
+      if (student.firstName || student.studentId) {
+        students.push(student);
+      }
+    }
+
+    return students;
+  }
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    setLoading(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = window.XLSX.read(buf, { type: 'array' });
+      const sheetName = wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      const students = parseRows(rows);
+      if (students.length === 0) {
+        setParsed({ error: 'ไม่พบข้อมูลนักเรียนในไฟล์ — ตรวจสอบรูปแบบหัวตาราง' });
+      } else {
+        setParsed({ students });
+      }
+    } catch (err) {
+      console.error(err);
+      setParsed({ error: 'อ่านไฟล์ไม่ได้: ' + err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleParsePaste = () => {
+    setLoading(true);
+    try {
+      const lines = pasteText.split(/\r?\n/);
+      const rows = lines.map(l => l.split('\t'));
+      const students = parseRows(rows);
+      if (students.length === 0) {
+        setParsed({ error: 'ไม่พบข้อมูล — ลองตรวจสอบว่า Copy มาจาก Excel (เซลล์แยกด้วย Tab)' });
+      } else {
+        setParsed({ students });
+      }
+    } catch (err) {
+      setParsed({ error: 'พาร์สไม่ได้: ' + err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirm = () => {
+    if (!parsed || !parsed.students) return;
+    if (!confirm(`จะนำเข้านักเรียน ${parsed.students.length} คน\n\n⚠️ การนำเข้าจะแทนที่รายชื่อเดิมทั้งหมด\nและลบประวัติเช็คชื่อเก่าด้วย\n\nต้องการดำเนินการต่อ?`)) return;
+    onImport(parsed.students);
+  };
+
+  return (
+    <Modal
+      title="นำเข้ารายชื่อนักเรียน"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button>
+          {parsed && parsed.students && (
+            <button className="btn btn-primary" onClick={handleConfirm}>
+              <Icon name="check" size={16}/>นำเข้า {parsed.students.length} คน
+            </button>
+          )}
+        </>
+      }
+    >
+      {!parsed && (
+        <>
+          <div className="tabs" style={{ marginBottom: 16, width: 'fit-content' }}>
+            <button className={mode === 'file' ? 'active' : ''} onClick={() => setMode('file')}>อัปโหลดไฟล์</button>
+            <button className={mode === 'paste' ? 'active' : ''} onClick={() => setMode('paste')}>วางข้อความ</button>
+          </div>
+
+          {mode === 'file' && (
+            <div>
+              <div style={{ padding: 24, border: '2px dashed var(--border-strong)', borderRadius: 8, textAlign: 'center' }}>
+                <Icon name="upload" size={32} style={{ color: 'var(--text-subtle)', marginBottom: 8 }}/>
+                <div style={{ marginBottom: 12, color: 'var(--text-muted)' }}>เลือกไฟล์ Excel (.xlsx, .xls) หรือ CSV</div>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={(e) => handleFile(e.target.files?.[0])}
+                  style={{ display: 'block', margin: '0 auto' }}
+                />
+              </div>
+            </div>
+          )}
+
+          {mode === 'paste' && (
+            <div>
+              <div className="field">
+                <label>วางข้อมูลจาก Excel ที่นี่ (Ctrl+V)</label>
+                <textarea
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                  placeholder={"เลขที่\tเลขประจำตัว\tคำนำหน้า\tชื่อ\tนามสกุล\n1\t04771\tนาย\tกิตติชัย\tมูลสาร\n2\t04813\tนาย\tกฤษณะ\tแกมนิล"}
+                  style={{ minHeight: 160, fontFamily: 'monospace', fontSize: 13 }}
+                />
+              </div>
+              <button className="btn btn-primary" onClick={handleParsePaste} disabled={!pasteText.trim() || loading}>
+                ตรวจสอบข้อมูล
+              </button>
+            </div>
+          )}
+
+          <div className="divider"></div>
+          <div className="subtle" style={{ lineHeight: 1.7 }}>
+            <div style={{ fontWeight: 500, color: 'var(--text)', marginBottom: 4 }}>📋 รูปแบบที่รองรับ:</div>
+            • แถวแรกเป็นหัวตาราง (เลขที่, เลขประจำตัว, คำนำหน้า, ชื่อ, นามสกุล)<br/>
+            • ช่องว่างปล่อยว่างได้ — ระบบจะเว้นไว้<br/>
+            • ถ้า "ชื่อ" มีคำนำหน้าปนมา (เช่น "นาย กิตติชัย") ระบบจะแยกอัตโนมัติ
+          </div>
+        </>
+      )}
+
+      {parsed && parsed.error && (
+        <div style={{ padding: 16, background: 'var(--absent-bg)', color: 'var(--absent)', borderRadius: 8, marginBottom: 12 }}>
+          ❌ {parsed.error}
+          <div style={{ marginTop: 8 }}>
+            <button className="btn btn-sm btn-secondary" onClick={() => setParsed(null)}>ลองใหม่</button>
+          </div>
+        </div>
+      )}
+
+      {parsed && parsed.students && (
+        <div>
+          <div style={{ marginBottom: 12 }}>
+            ✅ พบนักเรียน <strong>{parsed.students.length}</strong> คน — ตรวจสอบรายการก่อนนำเข้า:
+          </div>
+          <div style={{ maxHeight: 320, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+            <table className="history-table" style={{ minWidth: 0, width: '100%' }}>
+              <thead>
+                <tr>
+                  <th>เลขที่</th>
+                  <th>รหัส</th>
+                  <th>ชื่อ-สกุล</th>
+                </tr>
+              </thead>
+              <tbody>
+                {parsed.students.map((s, i) => (
+                  <tr key={i}>
+                    <td className="num">{s.number}</td>
+                    <td className="num">{s.studentId || '—'}</td>
+                    <td>{fullName(s) || <span style={{ color: 'var(--text-subtle)' }}>(ว่าง)</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <button className="btn btn-sm btn-ghost" onClick={() => setParsed(null)}>← เลือกไฟล์/วางข้อมูลใหม่</button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+};
+window.ImportStudentsModal = ImportStudentsModal;
+
+
+// =========================================================
 // Manage students view
 // =========================================================
 const ManageView = ({ students, addStudent, removeStudent, updateStudent, toast }) => {
   const [adding, setAdding] = React.useState(false);
   const [editing, setEditing] = React.useState(null);
-  const [draft, setDraft] = React.useState({ firstName: "", lastName: "", gender: "ช", studentId: "" });
+  const [draft, setDraft] = React.useState({ prefix: "", firstName: "", lastName: "", gender: "ช", studentId: "" });
+  const [importing, setImporting] = React.useState(false);
 
   const startAdd = () => {
     const nextNum = (Math.max(0, ...students.map(s => s.number))) + 1;
     setDraft({
+      prefix: "",
       firstName: "",
       lastName: "",
       gender: "ช",
-      studentId: String(66000 + 300 + students.length),
+      studentId: "",
     });
     setAdding(true);
   };
 
   const startEdit = (s) => {
     setEditing(s);
-    setDraft({ firstName: s.firstName, lastName: s.lastName, gender: s.gender, studentId: s.studentId });
+    setDraft({ prefix: s.prefix || "", firstName: s.firstName || "", lastName: s.lastName || "", gender: s.gender || "ช", studentId: s.studentId || "" });
   };
 
   const save = () => {
@@ -564,7 +817,7 @@ const ManageView = ({ students, addStudent, removeStudent, updateStudent, toast 
   };
 
   const confirmDel = (s) => {
-    if (confirm(`ลบ "${s.firstName} ${s.lastName}" ออกจากห้อง?\nข้อมูลการเช็คชื่อย้อนหลังจะถูกลบด้วย`)) {
+    if (confirm(`ลบ "${fullName(s)}" ออกจากห้อง?\nข้อมูลการเช็คชื่อย้อนหลังจะถูกลบด้วย`)) {
       removeStudent(s.id);
       toast("ลบนักเรียนแล้ว");
     }
@@ -578,22 +831,32 @@ const ManageView = ({ students, addStudent, removeStudent, updateStudent, toast 
             <div className="panel-title">จัดการรายชื่อนักเรียน</div>
             <div className="panel-sub">ทั้งหมด {students.length} คน</div>
           </div>
-          <button className="btn btn-primary" onClick={startAdd}>
-            <Icon name="plus" size={16}/>
-            เพิ่มนักเรียน
-          </button>
+          <div style={{display:'flex', gap: 8}}>
+            <button className="btn btn-secondary" onClick={() => setImporting(true)}>
+              <Icon name="upload" size={16}/>
+              นำเข้ารายชื่อ
+            </button>
+            <button className="btn btn-primary" onClick={startAdd}>
+              <Icon name="plus" size={16}/>
+              เพิ่มนักเรียน
+            </button>
+          </div>
         </div>
         {students.length === 0 ? (
           <div className="empty">
             <div className="title">ยังไม่มีนักเรียน</div>
-            <div>กดปุ่ม "เพิ่มนักเรียน" เพื่อเริ่มต้น</div>
+            <div>กดปุ่ม "เพิ่มนักเรียน" หรือ "นำเข้ารายชื่อ" เพื่อเริ่มต้น</div>
           </div>
         ) : students.map(s => (
           <div className="list-row" key={s.id}>
             <div className="num mono" style={{color:'var(--text-muted)'}}>{String(s.number).padStart(2, '0')}</div>
             <div className="name">
-              <div style={{fontWeight: 500}}>{s.firstName} {s.lastName}</div>
-              <div className="subtle">รหัส {s.studentId} · เพศ {s.gender === 'ช' ? 'ชาย' : 'หญิง'}</div>
+              <div style={{fontWeight: 500}}>{fullName(s)}</div>
+              <div className="subtle">
+                {s.studentId ? `รหัส ${s.studentId}` : ''}
+                {s.studentId && s.gender ? ' · ' : ''}
+                {s.gender ? `เพศ ${s.gender === 'ช' ? 'ชาย' : 'หญิง'}` : ''}
+              </div>
             </div>
             <div className="row">
               <button className="btn btn-ghost btn-sm" onClick={() => startEdit(s)}>
@@ -622,18 +885,8 @@ const ManageView = ({ students, addStudent, removeStudent, updateStudent, toast 
         >
           <div className="field-row">
             <div className="field">
-              <label>ชื่อจริง *</label>
-              <input value={draft.firstName} onChange={(e) => setDraft({...draft, firstName: e.target.value})} autoFocus/>
-            </div>
-            <div className="field">
-              <label>นามสกุล</label>
-              <input value={draft.lastName} onChange={(e) => setDraft({...draft, lastName: e.target.value})}/>
-            </div>
-          </div>
-          <div className="field-row">
-            <div className="field">
-              <label>รหัสนักเรียน</label>
-              <input value={draft.studentId} onChange={(e) => setDraft({...draft, studentId: e.target.value})}/>
+              <label>คำนำหน้า</label>
+              <input value={draft.prefix} onChange={(e) => setDraft({...draft, prefix: e.target.value})} placeholder="เช่น นาย น.ส. เด็กชาย"/>
             </div>
             <div className="field">
               <label>เพศ</label>
@@ -643,7 +896,34 @@ const ManageView = ({ students, addStudent, removeStudent, updateStudent, toast 
               </select>
             </div>
           </div>
+          <div className="field-row">
+            <div className="field">
+              <label>ชื่อจริง *</label>
+              <input value={draft.firstName} onChange={(e) => setDraft({...draft, firstName: e.target.value})} autoFocus/>
+            </div>
+            <div className="field">
+              <label>นามสกุล</label>
+              <input value={draft.lastName} onChange={(e) => setDraft({...draft, lastName: e.target.value})}/>
+            </div>
+          </div>
+          <div className="field">
+            <label>รหัส/เลขประจำตัว</label>
+            <input value={draft.studentId} onChange={(e) => setDraft({...draft, studentId: e.target.value})}/>
+          </div>
         </Modal>
+      )}
+
+      {importing && (
+        <ImportStudentsModal
+          onClose={() => setImporting(false)}
+          onImport={(list) => {
+            if (typeof window.replaceStudents === 'function') {
+              window.replaceStudents(list);
+              toast(`นำเข้ารายชื่อ ${list.length} คนเรียบร้อย`);
+            }
+            setImporting(false);
+          }}
+        />
       )}
     </div>
   );
@@ -692,7 +972,7 @@ function exportTermToExcel({ students, attendance, termInfo, className }) {
       ? Math.round(((counts.present + counts.late) / recorded) * 1000) / 10
       : 0;
     summaryAOA.push([
-      s.number, s.studentId, `${s.firstName} ${s.lastName}`,
+      s.number, s.studentId, fullName(s),
       s.gender === 'ช' ? 'ชาย' : 'หญิง',
       counts.present, counts.absent, counts.leave, counts.late,
       recorded, attendRate,
@@ -731,7 +1011,7 @@ function exportTermToExcel({ students, attendance, termInfo, className }) {
   matrixAOA.push(header);
 
   students.forEach(s => {
-    const row = [s.number, s.studentId, `${s.firstName} ${s.lastName}`];
+    const row = [s.number, s.studentId, fullName(s)];
     dateKeys.forEach(k => {
       const r = attendance[k]?.[s.id];
       if (!r) { row.push(""); return; }
@@ -766,7 +1046,7 @@ function exportTermToExcel({ students, attendance, termInfo, className }) {
       if (r && r.note) {
         const cfg = window.STATUSES.find(x => x.key === r.status);
         notesAOA.push([
-          k, s.number, `${s.firstName} ${s.lastName}`,
+          k, s.number, fullName(s),
           cfg ? cfg.label : r.status,
           r.note,
         ]);
@@ -1008,6 +1288,28 @@ const App = () => {
       students: prev.students.map(s => s.id === id ? { ...s, ...data } : s),
     }));
   };
+
+  // นำเข้ารายชื่อ — แทนที่ทั้งหมด + ลบประวัติเช็คชื่อเก่า
+  const replaceStudents = (newList) => {
+    update(prev => {
+      const studentsWithIds = newList.map((s, i) => ({
+        ...s,
+        id: s.id || `s${Date.now().toString(36)}_${i}`,
+        number: s.number || (i + 1),
+      }));
+      return {
+        ...prev,
+        students: studentsWithIds,
+        attendance: {}, // ล้างประวัติเก่า เพราะ id เปลี่ยน
+      };
+    });
+  };
+
+  // ให้ ImportStudentsModal เรียกได้ผ่าน window
+  React.useEffect(() => {
+    window.replaceStudents = replaceStudents;
+    return () => { delete window.replaceStudents; };
+  }, []);
 
   const handleExport = () => {
     // For the daily/history tabs, export the term containing the active date
