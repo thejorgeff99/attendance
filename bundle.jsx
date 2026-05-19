@@ -182,6 +182,8 @@ const Icon = ({ name, size = 20, ...props }) => {
     excel: <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 12h6"/><path d="M14 9l4 6M18 9l-4 6"/></>,
     user: <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/></>,
     save: <><path d="M5 4h11l3 3v13a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z"/><rect x="7" y="13" width="10" height="7"/><path d="M7 4v5h7V4"/></>,
+    cloudUp: <><path d="M7 18a5 5 0 01-1-9.9 7 7 0 0113.5 2A4.5 4.5 0 0118 18"/><path d="M12 12v8m0-8l-3 3m3-3l3 3"/></>,
+    cloudDown: <><path d="M7 18a5 5 0 01-1-9.9 7 7 0 0113.5 2A4.5 4.5 0 0118 18"/><path d="M12 20v-8m0 8l-3-3m3 3l3-3"/></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -818,6 +820,39 @@ window.exportTermToExcel = exportTermToExcel;
 const { useState, useEffect, useMemo } = React;
 
 const STORAGE_KEY = "attendance_v1";
+const LAST_SYNC_KEY = "attendance_last_sync";
+
+// ===== Google Sheets Sync =====
+// ส่งข้อมูลขึ้น Google Sheets
+async function uploadToSheets(state) {
+  const url = window.SHEETS_URL;
+  if (!url) throw new Error("ยังไม่ได้ตั้งค่า SHEETS_URL ใน index.html");
+
+  // Apps Script doPost ต้องใช้ text/plain เพื่อเลี่ยง CORS preflight
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({
+      students: state.students,
+      attendance: state.attendance,
+      className: state.className,
+    }),
+  });
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || "ส่งข้อมูลไม่สำเร็จ");
+  return json;
+}
+
+// ดึงข้อมูลจาก Google Sheets
+async function downloadFromSheets() {
+  const url = window.SHEETS_URL;
+  if (!url) throw new Error("ยังไม่ได้ตั้งค่า SHEETS_URL ใน index.html");
+
+  const res = await fetch(url, { method: "GET" });
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || "ดึงข้อมูลไม่สำเร็จ");
+  return json.data; // อาจเป็น null ถ้ายังไม่เคยมีข้อมูล
+}
 
 function loadState() {
   try {
@@ -847,6 +882,10 @@ const App = () => {
   const [tab, setTab] = useState("daily");
   const [date, setDate] = useState(() => window.formatDate(new Date()));
   const [toastMsg, setToastMsg] = useState(null);
+  const [syncing, setSyncing] = useState(null); // 'upload' | 'download' | null
+  const [lastSync, setLastSync] = useState(() => {
+    try { return localStorage.getItem(LAST_SYNC_KEY) || null; } catch (e) { return null; }
+  });
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isInstalled, setIsInstalled] = useState(() => 
     window.matchMedia('(display-mode: standalone)').matches ||
@@ -980,6 +1019,69 @@ const App = () => {
     setToastMsg(`ส่งออก Excel ${termInfo.label} แล้ว`);
   };
 
+  // ส่งข้อมูลขึ้น Google Sheets
+  const handleUpload = async () => {
+    if (syncing) return;
+    if (!window.SHEETS_URL) {
+      setToastMsg("ยังไม่ได้ตั้งค่า Google Sheets URL");
+      return;
+    }
+    setSyncing('upload');
+    try {
+      await uploadToSheets(state);
+      const now = new Date().toISOString();
+      try { localStorage.setItem(LAST_SYNC_KEY, now); } catch (e) {}
+      setLastSync(now);
+      setToastMsg("ส่งขึ้น Google Sheets แล้ว ✓");
+    } catch (err) {
+      console.error(err);
+      setToastMsg("ส่งไม่สำเร็จ: " + err.message);
+    } finally {
+      setSyncing(null);
+    }
+  };
+
+  // ดึงข้อมูลจาก Google Sheets (จะทับข้อมูลในเครื่อง)
+  const handleDownload = async () => {
+    if (syncing) return;
+    if (!window.SHEETS_URL) {
+      setToastMsg("ยังไม่ได้ตั้งค่า Google Sheets URL");
+      return;
+    }
+    const ok = window.confirm(
+      "การดึงข้อมูลจะทับข้อมูลในเครื่องนี้ทั้งหมด\n" +
+      "ถ้ามีการเช็คชื่อในเครื่องนี้ที่ยังไม่ได้ส่งขึ้น Sheets จะหายไป\n\n" +
+      "ต้องการดำเนินการต่อ?"
+    );
+    if (!ok) return;
+
+    setSyncing('download');
+    try {
+      const data = await downloadFromSheets();
+      if (!data) {
+        setToastMsg("ยังไม่มีข้อมูลใน Google Sheets");
+        return;
+      }
+      if (!data.students || !data.attendance) {
+        throw new Error("รูปแบบข้อมูลไม่ถูกต้อง");
+      }
+      setState({
+        students: data.students,
+        attendance: data.attendance,
+        className: data.className || className,
+      });
+      const now = new Date().toISOString();
+      try { localStorage.setItem(LAST_SYNC_KEY, now); } catch (e) {}
+      setLastSync(now);
+      setToastMsg("ดึงข้อมูลจาก Google Sheets แล้ว ✓");
+    } catch (err) {
+      console.error(err);
+      setToastMsg("ดึงไม่สำเร็จ: " + err.message);
+    } finally {
+      setSyncing(null);
+    }
+  };
+
   return (
     <div className="app">
       <header className="appbar">
@@ -1014,6 +1116,24 @@ const App = () => {
               <span className="install-label">ติดตั้งแอป</span>
             </button>
           )}
+          <button
+            className="btn btn-secondary"
+            onClick={handleDownload}
+            disabled={syncing !== null}
+            title="ดึงข้อมูลจาก Google Sheets"
+          >
+            <Icon name="cloudDown" size={16}/>
+            <span className="install-label">{syncing === 'download' ? 'กำลังดึง...' : 'ดึงจาก Sheets'}</span>
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={handleUpload}
+            disabled={syncing !== null}
+            title="ส่งข้อมูลขึ้น Google Sheets"
+          >
+            <Icon name="cloudUp" size={16}/>
+            <span className="install-label">{syncing === 'upload' ? 'กำลังส่ง...' : 'ส่งขึ้น Sheets'}</span>
+          </button>
           <button className="btn btn-primary" onClick={handleExport}>
             <Icon name="excel" size={16}/>
             <span className="install-label">ส่งออก Excel</span>

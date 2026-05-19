@@ -25,11 +25,13 @@
 </template>
 <div id="root"></div>
 
-<!-- ===== LIFF Config ===== -->
-<!-- หลังจากสร้าง LIFF App ใน LINE Developers แล้ว ให้เอา LIFF ID มาวางที่นี่ -->
-<!-- LIFF ID หน้าตาประมาณนี้: 2001234567-AbCdEfGh -->
+<!-- ===== Config ===== -->
 <script>
-  window.LIFF_ID = ""; // ⬅ ใส่ LIFF ID ของคุณตรงนี้ (เว้นว่างไว้ถ้ายังไม่มี — แอปก็ยังใช้ได้ปกติ)
+  // URL ของ Google Apps Script Web App ของคุณ
+  window.SHEETS_URL = "https://script.google.com/macros/s/AKfycbxR435Ep2oHF2YdRjJFX-SKS8o2Ogb6ArYNMWbDkSVYgABgYi1bXUR47dRN_QO9iioTTg/exec";
+
+  // LIFF ID — ใส่หลังจากสร้าง LIFF App ใน LINE Developers
+  window.LIFF_ID = "";
 </script>
 
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
@@ -40,13 +42,9 @@
 
 <script type="text/babel" src="bundle.jsx"></script>
 <script>
-  // Init LIFF (ถ้ามี LIFF_ID)
   if (window.LIFF_ID && window.liff) {
     liff.init({ liffId: window.LIFF_ID })
-      .then(() => {
-        console.log('LIFF ready', { inClient: liff.isInClient() });
-        window.LIFF_READY = true;
-      })
+      .then(() => { window.LIFF_READY = true; })
       .catch((err) => console.warn('LIFF init failed:', err));
   }
 
