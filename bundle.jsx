@@ -1086,11 +1086,11 @@ const ManageView = ({ students, addStudent, removeStudent, updateStudent, toast 
             <button
               className="btn btn-secondary"
               onClick={() => {
-                if (window.confirm("จัดลำดับเลขที่ใหม่ตามเลขประจำตัว?\nเลขที่เดิมจะเปลี่ยน — แต่ประวัติเช็คชื่อจะยังอยู่")) {
+                if (window.confirm("ใส่เลขที่ใหม่ 1, 2, 3, ... ตามลำดับปัจจุบัน?\n(ใช้หลังลบนักเรียนเพื่อให้เลขที่ไม่กระโดด)")) {
                   if (typeof window.resequenceStudents === 'function') window.resequenceStudents();
                 }
               }}
-              title="เรียงตามเลขประจำตัว แล้วใส่เลข 1, 2, 3..."
+              title="ใส่เลขที่ใหม่ 1, 2, 3, ..."
             >
               <Icon name="refresh" size={16}/>
               จัดลำดับ
@@ -1661,21 +1661,13 @@ const App = () => {
     });
   };
 
-  // จัดลำดับเลขที่ใหม่ — เรียงตามเลขประจำตัว (studentId) แล้วใส่เลข 1, 2, 3, ...
+  // จัดลำดับเลขที่ใหม่ — แค่ใส่เลข 1, 2, 3, ... ตามลำดับที่อยู่ในรายการ
+  // (ไม่เรียงใหม่ — ใช้หลังลบนักเรียนเพื่อให้เลขไม่กระโดด)
   const resequenceStudents = () => {
-    updateRoom(room => {
-      const sorted = [...room.students].sort((a, b) => {
-        const sa = String(a.studentId || '').trim();
-        const sb = String(b.studentId || '').trim();
-        if (sa && sb) return sa.localeCompare(sb, 'th', { numeric: true });
-        // fallback: keep current number
-        return (a.number || 0) - (b.number || 0);
-      });
-      return {
-        ...room,
-        students: sorted.map((s, i) => ({ ...s, number: i + 1 })),
-      };
-    });
+    updateRoom(room => ({
+      ...room,
+      students: room.students.map((s, i) => ({ ...s, number: i + 1 })),
+    }));
     setToastMsg("จัดลำดับเลขที่ใหม่แล้ว");
   };
 
