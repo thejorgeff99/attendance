@@ -168,6 +168,8 @@ const Icon = ({ name, size = 20, ...props }) => {
     calendar: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></>,
     chevronLeft: <path d="M15 6l-6 6 6 6"/>,
     chevronRight: <path d="M9 6l6 6-6 6"/>,
+    chevronDown: <path d="M6 9l6 6 6-6"/>,
+    refresh: <><path d="M3 12a9 9 0 019-9c2.5 0 4.7 1 6.3 2.7L21 8M21 4v4h-4"/><path d="M21 12a9 9 0 01-9 9c-2.5 0-4.7-1-6.3-2.7L3 16M3 20v-4h4"/></>,
     download: <><path d="M12 4v12m0 0l-4-4m4 4l4-4"/><path d="M4 20h16"/></>,
     check: <path d="M5 12l5 5 9-11"/>,
     checkAll: <><path d="M3 12l4 4 8-10"/><path d="M9 14l4 4 8-10"/></>,
@@ -336,6 +338,8 @@ const DailyView = ({ students, date, setDate, dayRecord, setStatus, setNote, mar
       </div>
 
       <SummaryCards counts={counts} total={students.length} />
+
+      <DailySummary students={students} dayRecord={dayRecord} />
 
       <div className="panel">
         <div className="panel-header">
@@ -536,8 +540,255 @@ window.computeTermInfo = (offset) => {
 
 
 // =========================================================
-// Import Students Modal — รองรับ Excel + Copy-paste
+// Room Switcher (dropdown) — สลับระหว่างห้องต่างๆ
 // =========================================================
+const RoomSwitcher = ({ rooms, activeRoomId, onSwitch, onAdd, onRename, onRemove, studentCount }) => {
+  const [open, setOpen] = React.useState(false);
+  const [renaming, setRenaming] = React.useState(null); // room object
+  const [adding, setAdding] = React.useState(false);
+  const [draftName, setDraftName] = React.useState("");
+  const ref = React.useRef(null);
+
+  const active = rooms.find(r => r.id === activeRoomId) || rooms[0];
+
+  React.useEffect(() => {
+    const onClick = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  const handleAddSubmit = () => {
+    const n = draftName.trim();
+    if (!n) return;
+    onAdd(n);
+    setAdding(false);
+    setDraftName("");
+    setOpen(false);
+  };
+
+  const handleRenameSubmit = () => {
+    const n = draftName.trim();
+    if (!n || !renaming) return;
+    onRename(renaming.id, n);
+    setRenaming(null);
+    setDraftName("");
+  };
+
+  const handleRemove = (room) => {
+    if (window.confirm(`ลบห้อง "${room.name}"?\nข้อมูลนักเรียน ${room.students.length} คน และประวัติเช็คชื่อทั้งหมดจะหายไป\n\nต้องการดำเนินการต่อ?`)) {
+      onRemove(room.id);
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '2px 8px', marginTop: 1,
+          background: 'var(--surface-2)', borderRadius: 6,
+          fontSize: 13, color: 'var(--text-muted)',
+          cursor: 'pointer',
+        }}
+      >
+        <span style={{ fontWeight: 500, color: 'var(--text)' }}>{active?.name || '—'}</span>
+        <span>· {studentCount} คน</span>
+        <Icon name="chevronDown" size={12}/>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+          minWidth: 240, background: 'var(--surface)',
+          border: '1px solid var(--border)', borderRadius: 8,
+          boxShadow: 'var(--shadow)', zIndex: 50, padding: 6,
+        }}>
+          {rooms.map(r => (
+            <div key={r.id} style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '6px 8px', borderRadius: 6,
+              background: r.id === activeRoomId ? 'var(--surface-2)' : 'transparent',
+            }}>
+              <button
+                onClick={() => { onSwitch(r.id); setOpen(false); }}
+                style={{
+                  flex: 1, textAlign: 'left',
+                  fontSize: 14,
+                  color: 'var(--text)',
+                  cursor: 'pointer',
+                }}
+              >
+                <div style={{ fontWeight: r.id === activeRoomId ? 500 : 400 }}>{r.name}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.students.length} คน</div>
+              </button>
+              <button
+                title="แก้ไขชื่อห้อง"
+                onClick={(e) => { e.stopPropagation(); setRenaming(r); setDraftName(r.name); }}
+                style={{ padding: 4, borderRadius: 4, color: 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                <Icon name="edit" size={14}/>
+              </button>
+              {rooms.length > 1 && (
+                <button
+                  title="ลบห้องนี้"
+                  onClick={(e) => { e.stopPropagation(); handleRemove(r); }}
+                  style={{ padding: 4, borderRadius: 4, color: 'var(--absent)', cursor: 'pointer' }}
+                >
+                  <Icon name="trash" size={14}/>
+                </button>
+              )}
+            </div>
+          ))}
+          <div style={{ height: 1, background: 'var(--border)', margin: '6px 0' }}/>
+          {!adding ? (
+            <button
+              onClick={() => { setAdding(true); setDraftName(""); }}
+              style={{
+                width: '100%', textAlign: 'left',
+                padding: '6px 8px', borderRadius: 6,
+                color: 'var(--text)', fontSize: 14,
+                display: 'flex', alignItems: 'center', gap: 6,
+                cursor: 'pointer',
+              }}
+            >
+              <Icon name="plus" size={14}/> เพิ่มห้องใหม่
+            </button>
+          ) : (
+            <div style={{ display: 'flex', gap: 4, padding: '4px' }}>
+              <input
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleAddSubmit(); if (e.key === 'Escape') setAdding(false); }}
+                placeholder="เช่น ม.5/4"
+                autoFocus
+                style={{ flex: 1, padding: '6px 8px', border: '1px solid var(--border-strong)', borderRadius: 6, fontSize: 14 }}
+              />
+              <button onClick={handleAddSubmit} className="btn btn-primary btn-sm">เพิ่ม</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {renaming && (
+        <Modal
+          title="แก้ไขชื่อห้อง"
+          onClose={() => { setRenaming(null); setDraftName(""); }}
+          footer={
+            <>
+              <button className="btn btn-ghost" onClick={() => { setRenaming(null); setDraftName(""); }}>ยกเลิก</button>
+              <button className="btn btn-primary" onClick={handleRenameSubmit}><Icon name="save" size={16}/>บันทึก</button>
+            </>
+          }
+        >
+          <div className="field">
+            <label>ชื่อห้อง</label>
+            <input
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleRenameSubmit(); }}
+              autoFocus
+            />
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+window.RoomSwitcher = RoomSwitcher;
+
+
+// =========================================================
+// Daily Summary — แสดงรายชื่อคนขาด/ลา/มาสาย
+// =========================================================
+const DailySummary = ({ students, dayRecord }) => {
+  const groups = { absent: [], leave: [], late: [] };
+  students.forEach(s => {
+    const rec = dayRecord[s.id];
+    if (rec && groups[rec.status]) {
+      groups[rec.status].push({ ...s, note: rec.note });
+    }
+  });
+
+  const sections = [
+    { key: 'absent', label: 'ขาด', color: 'var(--absent)', bg: 'var(--absent-bg)', border: 'var(--absent-border)' },
+    { key: 'leave', label: 'ลา', color: 'var(--leave)', bg: 'var(--leave-bg)', border: 'var(--leave-border)' },
+    { key: 'late', label: 'มาสาย', color: 'var(--late)', bg: 'var(--late-bg)', border: 'var(--late-border)' },
+  ];
+
+  const totalAbnormal = groups.absent.length + groups.leave.length + groups.late.length;
+  if (totalAbnormal === 0) {
+    return (
+      <div className="panel" style={{ marginBottom: 16, padding: '16px 18px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 18 }}>🎉</span>
+          <div>
+            <div style={{ fontWeight: 500 }}>มากันครบทั้งห้อง!</div>
+            <div className="subtle">ไม่มีคนขาด ลา หรือมาสาย</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="panel" style={{ marginBottom: 16 }}>
+      <div className="panel-header" style={{ padding: '10px 18px' }}>
+        <div className="panel-title">สรุปวันนี้</div>
+        <div className="panel-sub">{totalAbnormal} คน · มา {students.length - totalAbnormal} คน</div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 1, background: 'var(--border)' }}>
+        {sections.map(sec => {
+          const list = groups[sec.key];
+          return (
+            <div key={sec.key} style={{ background: 'var(--surface)', padding: '12px 18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <span style={{
+                  display: 'inline-block', width: 8, height: 8, borderRadius: 99,
+                  background: sec.color,
+                }}/>
+                <span style={{ fontWeight: 500 }}>{sec.label}</span>
+                <span style={{
+                  background: sec.bg, color: sec.color,
+                  fontSize: 12, padding: '1px 8px', borderRadius: 10,
+                  fontWeight: 600,
+                }}>
+                  {list.length}
+                </span>
+              </div>
+              {list.length === 0 ? (
+                <div className="subtle" style={{ fontSize: 13 }}>—</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {list.map(s => (
+                    <div key={s.id} style={{ fontSize: 13, lineHeight: 1.4 }}>
+                      <span style={{ color: 'var(--text-muted)', fontFamily: 'monospace', marginRight: 6 }}>
+                        {String(s.number).padStart(2, '0')}
+                      </span>
+                      {fullName(s)}
+                      {s.note && (
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 28, marginTop: 1 }}>
+                          ↳ {s.note}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+window.DailySummary = DailySummary;
+
+
+
 const ImportStudentsModal = ({ onClose, onImport }) => {
   const [mode, setMode] = React.useState('file'); // 'file' | 'paste'
   const [pasteText, setPasteText] = React.useState('');
@@ -831,7 +1082,19 @@ const ManageView = ({ students, addStudent, removeStudent, updateStudent, toast 
             <div className="panel-title">จัดการรายชื่อนักเรียน</div>
             <div className="panel-sub">ทั้งหมด {students.length} คน</div>
           </div>
-          <div style={{display:'flex', gap: 8}}>
+          <div style={{display:'flex', gap: 8, flexWrap: 'wrap'}}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                if (window.confirm("จัดลำดับเลขที่ใหม่ตามเลขประจำตัว?\nเลขที่เดิมจะเปลี่ยน — แต่ประวัติเช็คชื่อจะยังอยู่")) {
+                  if (typeof window.resequenceStudents === 'function') window.resequenceStudents();
+                }
+              }}
+              title="เรียงตามเลขประจำตัว แล้วใส่เลข 1, 2, 3..."
+            >
+              <Icon name="refresh" size={16}/>
+              จัดลำดับ
+            </button>
             <button className="btn btn-secondary" onClick={() => setImporting(true)}>
               <Icon name="upload" size={16}/>
               นำเข้ารายชื่อ
@@ -1103,19 +1366,18 @@ const STORAGE_KEY = "attendance_v1";
 const LAST_SYNC_KEY = "attendance_last_sync";
 
 // ===== Google Sheets Sync =====
-// ส่งข้อมูลขึ้น Google Sheets
+// ส่งข้อมูลขึ้น Google Sheets (multi-room)
 async function uploadToSheets(state) {
   const url = window.SHEETS_URL;
   if (!url) throw new Error("ยังไม่ได้ตั้งค่า SHEETS_URL ใน index.html");
 
-  // Apps Script doPost ต้องใช้ text/plain เพื่อเลี่ยง CORS preflight
+  // ส่งทั้ง state แบบ multi-room
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify({
-      students: state.students,
-      attendance: state.attendance,
-      className: state.className,
+      rooms: state.rooms,
+      activeRoomId: state.activeRoomId,
     }),
   });
   const json = await res.json();
@@ -1131,7 +1393,31 @@ async function downloadFromSheets() {
   const res = await fetch(url, { method: "GET" });
   const json = await res.json();
   if (!json.ok) throw new Error(json.error || "ดึงข้อมูลไม่สำเร็จ");
-  return json.data; // อาจเป็น null ถ้ายังไม่เคยมีข้อมูล
+  return json.data;
+}
+
+function makeRoomId() {
+  return "r_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// แปลง state เก่า (ห้องเดียว) เป็น state ใหม่ (หลายห้อง)
+function migrateToMultiRoom(oldState) {
+  if (oldState && oldState.rooms && oldState.activeRoomId) {
+    return oldState; // เป็น format ใหม่อยู่แล้ว
+  }
+  // format เก่า
+  const roomId = makeRoomId();
+  return {
+    rooms: {
+      [roomId]: {
+        id: roomId,
+        name: oldState?.className || "ม.5/3",
+        students: oldState?.students || [],
+        attendance: oldState?.attendance || {},
+      }
+    },
+    activeRoomId: roomId,
+  };
 }
 
 function loadState() {
@@ -1139,14 +1425,21 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed.students && parsed.attendance) return parsed;
+      return migrateToMultiRoom(parsed);
     }
   } catch (e) { console.warn(e); }
   // First run: seed with mock data
+  const roomId = makeRoomId();
   return {
-    students: window.INITIAL_STUDENTS,
-    attendance: window.genSampleAttendance(),
-    className: "ม.5/3",
+    rooms: {
+      [roomId]: {
+        id: roomId,
+        name: "ม.5/3",
+        students: window.INITIAL_STUDENTS,
+        attendance: window.genSampleAttendance(),
+      }
+    },
+    activeRoomId: roomId,
   };
 }
 
@@ -1157,7 +1450,12 @@ function saveState(state) {
 
 const App = () => {
   const [state, setState] = useState(loadState);
-  const { students, attendance, className } = state;
+  const { rooms, activeRoomId } = state;
+  const activeRoom = rooms[activeRoomId] || Object.values(rooms)[0];
+  const students = activeRoom?.students || [];
+  const attendance = activeRoom?.attendance || {};
+  const className = activeRoom?.name || "";
+  const roomList = Object.values(rooms);
 
   const [tab, setTab] = useState("daily");
   const [date, setDate] = useState(() => window.formatDate(new Date()));
@@ -1213,30 +1511,88 @@ const App = () => {
 
   const dayRecord = attendance[date] || {};
 
+  // อัปเดต state ทั้งก้อน (สำหรับ room-level changes)
   const update = (fn) => setState(prev => fn(prev));
 
-  const setStatus = (studentId, status) => {
+  // อัปเดตเฉพาะ active room (สำหรับ student/attendance changes)
+  const updateRoom = (fn) => setState(prev => {
+    const room = prev.rooms[prev.activeRoomId];
+    if (!room) return prev;
+    return {
+      ...prev,
+      rooms: { ...prev.rooms, [prev.activeRoomId]: fn(room) },
+    };
+  });
+
+  // ===== Room management =====
+  const switchRoom = (roomId) => {
+    update(prev => ({ ...prev, activeRoomId: roomId }));
+  };
+
+  const addRoom = (name) => {
+    const newId = makeRoomId();
     update(prev => ({
       ...prev,
+      rooms: {
+        ...prev.rooms,
+        [newId]: { id: newId, name: name || "ห้องใหม่", students: [], attendance: {} },
+      },
+      activeRoomId: newId,
+    }));
+    setToastMsg(`เพิ่มห้อง "${name}" แล้ว`);
+  };
+
+  const renameRoom = (roomId, newName) => {
+    update(prev => ({
+      ...prev,
+      rooms: { ...prev.rooms, [roomId]: { ...prev.rooms[roomId], name: newName } },
+    }));
+  };
+
+  const removeRoom = (roomId) => {
+    update(prev => {
+      const newRooms = { ...prev.rooms };
+      delete newRooms[roomId];
+      const remainingIds = Object.keys(newRooms);
+      if (remainingIds.length === 0) {
+        // ถ้าลบห้องสุดท้าย สร้างห้องเปล่าให้
+        const fallbackId = makeRoomId();
+        return {
+          rooms: { [fallbackId]: { id: fallbackId, name: "ห้องใหม่", students: [], attendance: {} } },
+          activeRoomId: fallbackId,
+        };
+      }
+      return {
+        rooms: newRooms,
+        activeRoomId: prev.activeRoomId === roomId ? remainingIds[0] : prev.activeRoomId,
+      };
+    });
+    setToastMsg("ลบห้องแล้ว");
+  };
+
+  // ===== Student/Attendance handlers (เฉพาะ active room) =====
+  const setStatus = (studentId, status) => {
+    updateRoom(room => ({
+      ...room,
       attendance: {
-        ...prev.attendance,
+        ...room.attendance,
         [date]: {
-          ...(prev.attendance[date] || {}),
-          [studentId]: { ...(prev.attendance[date]?.[studentId] || {}), status },
+          ...(room.attendance[date] || {}),
+          [studentId]: { ...(room.attendance[date]?.[studentId] || {}), status },
         },
       },
     }));
   };
 
   const setNote = (studentId, note) => {
-    update(prev => {
-      const existing = prev.attendance[date]?.[studentId] || { status: 'present' };
+    updateRoom(room => {
+      const existing = room.attendance[date]?.[studentId] || { status: 'present' };
       return {
-        ...prev,
+        ...room,
         attendance: {
-          ...prev.attendance,
+          ...room.attendance,
           [date]: {
-            ...(prev.attendance[date] || {}),
+            ...(room.attendance[date] || {}),
             [studentId]: { ...existing, note },
           },
         },
@@ -1245,76 +1601,97 @@ const App = () => {
   };
 
   const markAll = (status) => {
-    update(prev => {
-      const next = { ...(prev.attendance[date] || {}) };
-      prev.students.forEach(s => {
+    updateRoom(room => {
+      const next = { ...(room.attendance[date] || {}) };
+      room.students.forEach(s => {
         next[s.id] = { ...(next[s.id] || {}), status };
       });
-      return { ...prev, attendance: { ...prev.attendance, [date]: next } };
+      return { ...room, attendance: { ...room.attendance, [date]: next } };
     });
     setToastMsg(`บันทึก "มา" ทั้งห้อง ${students.length} คน`);
   };
 
   const addStudent = (data) => {
-    update(prev => {
-      const maxNum = Math.max(0, ...prev.students.map(s => s.number));
+    updateRoom(room => {
+      const maxNum = Math.max(0, ...room.students.map(s => s.number));
       const id = "s" + Date.now().toString(36);
       return {
-        ...prev,
-        students: [...prev.students, { ...data, id, number: maxNum + 1 }],
+        ...room,
+        students: [...room.students, { ...data, id, number: maxNum + 1 }],
       };
     });
   };
 
   const removeStudent = (id) => {
-    update(prev => {
+    updateRoom(room => {
       const newAtt = {};
-      Object.entries(prev.attendance).forEach(([k, v]) => {
+      Object.entries(room.attendance).forEach(([k, v]) => {
         const copy = { ...v };
         delete copy[id];
         newAtt[k] = copy;
       });
       return {
-        ...prev,
-        students: prev.students.filter(s => s.id !== id),
+        ...room,
+        students: room.students.filter(s => s.id !== id),
         attendance: newAtt,
       };
     });
   };
 
   const updateStudent = (id, data) => {
-    update(prev => ({
-      ...prev,
-      students: prev.students.map(s => s.id === id ? { ...s, ...data } : s),
+    updateRoom(room => ({
+      ...room,
+      students: room.students.map(s => s.id === id ? { ...s, ...data } : s),
     }));
   };
 
-  // นำเข้ารายชื่อ — แทนที่ทั้งหมด + ลบประวัติเช็คชื่อเก่า
+  // นำเข้ารายชื่อ — แทนที่ทั้งหมดในห้องนี้ + ลบประวัติเช็คชื่อเก่า
   const replaceStudents = (newList) => {
-    update(prev => {
+    updateRoom(room => {
       const studentsWithIds = newList.map((s, i) => ({
         ...s,
         id: s.id || `s${Date.now().toString(36)}_${i}`,
         number: s.number || (i + 1),
       }));
       return {
-        ...prev,
+        ...room,
         students: studentsWithIds,
         attendance: {}, // ล้างประวัติเก่า เพราะ id เปลี่ยน
       };
     });
   };
 
-  // ให้ ImportStudentsModal เรียกได้ผ่าน window
+  // จัดลำดับเลขที่ใหม่ — เรียงตามเลขประจำตัว (studentId) แล้วใส่เลข 1, 2, 3, ...
+  const resequenceStudents = () => {
+    updateRoom(room => {
+      const sorted = [...room.students].sort((a, b) => {
+        const sa = String(a.studentId || '').trim();
+        const sb = String(b.studentId || '').trim();
+        if (sa && sb) return sa.localeCompare(sb, 'th', { numeric: true });
+        // fallback: keep current number
+        return (a.number || 0) - (b.number || 0);
+      });
+      return {
+        ...room,
+        students: sorted.map((s, i) => ({ ...s, number: i + 1 })),
+      };
+    });
+    setToastMsg("จัดลำดับเลขที่ใหม่แล้ว");
+  };
+
+  // ให้ Modal ต่างๆ เรียกได้ผ่าน window
   React.useEffect(() => {
     window.replaceStudents = replaceStudents;
-    return () => { delete window.replaceStudents; };
+    window.resequenceStudents = resequenceStudents;
+    return () => {
+      delete window.replaceStudents;
+      delete window.resequenceStudents;
+    };
   }, []);
 
   const handleExport = () => {
-    // For the daily/history tabs, export the term containing the active date
     const refDate = tab === 'history'
-      ? window.computeTermInfo(0).start  // current term default — could enhance
+      ? window.computeTermInfo(0).start
       : window.parseDate(date);
     const termInfo = window.getTermInfo(refDate);
     window.exportTermToExcel({ students, attendance, termInfo, className });
@@ -1364,14 +1741,19 @@ const App = () => {
         setToastMsg("ยังไม่มีข้อมูลใน Google Sheets");
         return;
       }
-      if (!data.students || !data.attendance) {
+      // รองรับทั้ง format ใหม่ (rooms) และ format เก่า
+      if (data.rooms && data.activeRoomId) {
+        setState({ rooms: data.rooms, activeRoomId: data.activeRoomId });
+      } else if (data.students && data.attendance) {
+        // format เก่า — migrate
+        setState(migrateToMultiRoom({
+          students: data.students,
+          attendance: data.attendance,
+          className: data.className || className,
+        }));
+      } else {
         throw new Error("รูปแบบข้อมูลไม่ถูกต้อง");
       }
-      setState({
-        students: data.students,
-        attendance: data.attendance,
-        className: data.className || className,
-      });
       const now = new Date().toISOString();
       try { localStorage.setItem(LAST_SYNC_KEY, now); } catch (e) {}
       setLastSync(now);
@@ -1391,7 +1773,15 @@ const App = () => {
           <div className="brand-mark">ช</div>
           <div className="brand-text">
             <div className="brand-title">ระบบเช็คชื่อนักเรียน</div>
-            <div className="brand-sub">{className} · {students.length} คน</div>
+            <RoomSwitcher
+              rooms={roomList}
+              activeRoomId={activeRoomId}
+              onSwitch={switchRoom}
+              onAdd={addRoom}
+              onRename={renameRoom}
+              onRemove={removeRoom}
+              studentCount={students.length}
+            />
           </div>
         </div>
         <div className="tabs">
